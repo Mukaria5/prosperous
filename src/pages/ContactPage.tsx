@@ -1,48 +1,142 @@
-import { useState, type FormEvent } from 'react'
+import { useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import { ArrowUpRight, Mail } from 'lucide-react'
+import { Link } from 'react-router-dom'
 import { Container } from '../components/Foundation'
 import { PageMeta } from '../components/PageMeta'
 import { configuredEmail, configuredExternalUrl, siteConfig } from '../data/siteConfig'
+import { buildProjectInquiryMailto, projectTypes, validateProjectInquiry, type InquiryErrors, type InquiryField, type ProjectInquiry } from '../utils/projectInquiry'
 
 const email = configuredEmail(siteConfig.email)
 const linkedin = configuredExternalUrl(siteConfig.linkedinUrl, ['linkedin.com'])
 const github = configuredExternalUrl(siteConfig.githubUrl, ['github.com'])
 
+const initialValues: ProjectInquiry = {
+  fullName: '',
+  email: '',
+  projectType: '',
+  description: '',
+  company: '',
+  budget: '',
+  timeline: '',
+  referenceUrl: '',
+}
+
 export function ContactPage() {
+  const [values, setValues] = useState(initialValues)
+  const [errors, setErrors] = useState<InquiryErrors>({})
   const [formNotice, setFormNotice] = useState('')
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const form = new FormData(event.currentTarget)
-    const name = String(form.get('name') || '').trim()
-    const senderEmail = String(form.get('email') || '').trim()
-    const message = String(form.get('message') || '').trim()
-    if (!email) {
-      setFormNotice('Email contact is not configured yet. Please use the listed social profiles instead.')
-      return
-    }
-    const subject = encodeURIComponent(`Project enquiry from ${name}`)
-    const body = encodeURIComponent(`From: ${name}\nReply to: ${senderEmail}\n\n${message}`)
-    window.location.href = `mailto:${email}?subject=${subject}&body=${body}`
-    setFormNotice('Your email app should open with this message ready to review and send. This website does not send or store it.')
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const submissionInProgress = useRef(false)
+
+  function handleChange(event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) {
+    const { name, value } = event.currentTarget
+    const field = name as InquiryField
+    setValues((current) => ({ ...current, [field]: value }))
+    setErrors((current) => ({ ...current, [field]: undefined }))
+    setFormNotice('')
   }
 
-  return <><PageMeta title="Contact — Prosperous Mukaria" description="Contact Prosperous Mukaria about websites, digital products, UI/UX, and practical AI-powered applications." /><section className="contact-page" aria-labelledby="contact-page-title">
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (submissionInProgress.current) return
+
+    const nextErrors = validateProjectInquiry(values)
+    setErrors(nextErrors)
+    const firstInvalid = Object.keys(nextErrors)[0]
+    if (firstInvalid) {
+      setFormNotice('Please review the highlighted fields.')
+      document.getElementById(`contact-${firstInvalid}`)?.focus()
+      return
+    }
+
+    if (!email) {
+      setFormNotice('Email contact is not configured. Please use the direct contact option instead.')
+      return
+    }
+
+    submissionInProgress.current = true
+    setIsSubmitting(true)
+    setFormNotice('Your email application should open with a draft. Review and send it there to complete your inquiry; this website has not sent or stored the message.')
+    window.location.href = buildProjectInquiryMailto(email, values)
+    window.setTimeout(() => {
+      submissionInProgress.current = false
+      setIsSubmitting(false)
+    }, 1200)
+  }
+
+  const describedBy = (field: InquiryField) => errors[field] ? `contact-${field}-error` : undefined
+
+  return <><PageMeta title="Contact — Prosperous Mukaria" description="Share your project requirements with Prosperous Mukaria, a Nairobi-based developer and digital product creator." /><section className="contact-page" aria-labelledby="contact-page-title">
     <Container>
       <p className="eyebrow"><span className="eyebrow-rule" /> CONTACT</p>
-      <div className="contact-page-heading"><h1 id="contact-page-title">Have an idea?<br />Let&apos;s make it <em>happen.</em></h1><p>I&apos;m open to discussing website projects, digital products, UI/UX work, and practical AI-powered solutions. If you have something in mind, let&apos;s talk.</p></div>
-      <div className="contact-page-grid"><form className="contact-form" onSubmit={handleSubmit}>
-        <h2>Send an enquiry</h2>
-        <p className="contact-form-note">Submitting opens your email app with a draft. Nothing is sent or stored by this website.</p>
-        <label htmlFor="contact-name">Your name</label><input className="glass-surface" id="contact-name" name="name" autoComplete="name" required />
-        <label htmlFor="contact-email">Your email</label><input className="glass-surface" id="contact-email" name="email" type="email" autoComplete="email" required />
-        <label htmlFor="contact-message">What would you like to make?</label><textarea className="glass-surface" id="contact-message" name="message" rows={5} required />
-        <button className="button button-primary" type="submit">Open email draft <ArrowUpRight size={15} aria-hidden="true" /></button>
+      <div className="contact-page-heading"><h1 id="contact-page-title">Have an idea?<br />Let&apos;s make it <em>happen.</em></h1><p>Share a few details about what you&apos;re planning. I&apos;ll review your requirements and get back to you.</p></div>
+      <div className="contact-page-grid"><form className="contact-form" onSubmit={handleSubmit} noValidate>
+        <h2>Tell me about your project</h2>
+        <p className="contact-form-note">Your email application will open with a prepared draft. Review it and send it there to complete your inquiry; this website does not send or store messages.</p>
+        <div className="contact-form-fields">
+          <div className="contact-form-field">
+            <label htmlFor="contact-fullName">Full name <span aria-hidden="true">*</span></label>
+            <input className="glass-surface" id="contact-fullName" name="fullName" autoComplete="name" value={values.fullName} onChange={handleChange} required aria-invalid={Boolean(errors.fullName)} aria-describedby={describedBy('fullName')} />
+            {errors.fullName && <p className="contact-field-error" id="contact-fullName-error" role="alert">{errors.fullName}</p>}
+          </div>
+          <div className="contact-form-field">
+            <label htmlFor="contact-email">Email address <span aria-hidden="true">*</span></label>
+            <input className="glass-surface" id="contact-email" name="email" type="email" autoComplete="email" value={values.email} onChange={handleChange} required aria-invalid={Boolean(errors.email)} aria-describedby={describedBy('email')} />
+            {errors.email && <p className="contact-field-error" id="contact-email-error" role="alert">{errors.email}</p>}
+          </div>
+          <div className="contact-form-field">
+            <label htmlFor="contact-projectType">Project type <span aria-hidden="true">*</span></label>
+            <select className="glass-surface" id="contact-projectType" name="projectType" value={values.projectType} onChange={handleChange} required aria-invalid={Boolean(errors.projectType)} aria-describedby={describedBy('projectType')}>
+              <option value="">Select a project type</option>
+              {projectTypes.map((projectType) => <option key={projectType} value={projectType}>{projectType}</option>)}
+            </select>
+            {errors.projectType && <p className="contact-field-error" id="contact-projectType-error" role="alert">{errors.projectType}</p>}
+          </div>
+          <div className="contact-form-field">
+            <label htmlFor="contact-company">Company or brand name <span className="contact-optional">Optional</span></label>
+            <input className="glass-surface" id="contact-company" name="company" autoComplete="organization" value={values.company} onChange={handleChange} />
+          </div>
+          <div className="contact-form-field">
+            <label htmlFor="contact-budget">Estimated budget <span className="contact-optional">Optional</span></label>
+            <select className="glass-surface" id="contact-budget" name="budget" value={values.budget} onChange={handleChange}>
+              <option value="">Choose a range (optional)</option>
+              <option>Under KSh 20,000</option>
+              <option>KSh 20,000–50,000</option>
+              <option>KSh 50,000–100,000</option>
+              <option>KSh 100,000–250,000</option>
+              <option>Above KSh 250,000</option>
+              <option>Not sure yet</option>
+            </select>
+          </div>
+          <div className="contact-form-field">
+            <label htmlFor="contact-timeline">Expected timeline <span className="contact-optional">Optional</span></label>
+            <select className="glass-surface" id="contact-timeline" name="timeline" value={values.timeline} onChange={handleChange}>
+              <option value="">Choose a timeline (optional)</option>
+              <option>ASAP</option>
+              <option>Within 2–4 weeks</option>
+              <option>Within 1–3 months</option>
+              <option>Flexible</option>
+            </select>
+          </div>
+          <div className="contact-form-field contact-form-field--wide">
+            <label htmlFor="contact-referenceUrl">Reference website or project URL <span className="contact-optional">Optional</span></label>
+            <input className="glass-surface" id="contact-referenceUrl" name="referenceUrl" type="url" placeholder="https://example.com" value={values.referenceUrl} onChange={handleChange} aria-invalid={Boolean(errors.referenceUrl)} aria-describedby={describedBy('referenceUrl')} />
+            {errors.referenceUrl && <p className="contact-field-error" id="contact-referenceUrl-error" role="alert">{errors.referenceUrl}</p>}
+          </div>
+          <div className="contact-form-field contact-form-field--wide">
+            <label htmlFor="contact-description">Project description <span aria-hidden="true">*</span></label>
+            <textarea className="glass-surface" id="contact-description" name="description" rows={6} placeholder="What are you looking to create, and what would you like it to help you achieve?" value={values.description} onChange={handleChange} required aria-invalid={Boolean(errors.description)} aria-describedby={describedBy('description')} />
+            {errors.description && <p className="contact-field-error" id="contact-description-error" role="alert">{errors.description}</p>}
+          </div>
+        </div>
+        <button className="button button-primary" type="submit" disabled={isSubmitting}>{isSubmitting ? 'Preparing email draft…' : 'Send Project Inquiry'} <ArrowUpRight size={15} aria-hidden="true" /></button>
         <p className="contact-form-notice" role="status" aria-live="polite">{formNotice}</p>
       </form><aside className="contact-details" aria-label="Contact details">
         <div><span>EMAIL</span>{email ? <a href={`mailto:${email}`}>{email}<ArrowUpRight size={14} aria-hidden="true" /></a> : <p>Email contact is not configured.</p>}</div>
         <div><span>LOCATION</span><p>{siteConfig.location}</p></div>
         <div><span>PROFILES</span><p className="contact-profile-links">{linkedin && <a href={linkedin} target="_blank" rel="noopener noreferrer" aria-label="LinkedIn profile (opens in a new tab)">LinkedIn <ArrowUpRight size={14} aria-hidden="true" /></a>}{github && <a href={github} target="_blank" rel="noopener noreferrer" aria-label="GitHub profile (opens in a new tab)">GitHub <ArrowUpRight size={14} aria-hidden="true" /></a>}</p></div>
-        {email && <a className="contact-direct-link" href={`mailto:${email}?subject=${encodeURIComponent('Project enquiry — Prosperous Mukaria')}`}><Mail size={15} aria-hidden="true" /> Email me directly</a>}
+        {email && <a className="contact-direct-link" href={`mailto:${email}?subject=${encodeURIComponent('Project inquiry — Prosperous Mukaria')}`}><Mail size={15} aria-hidden="true" /> Email me directly</a>}
+        <Link className="contact-work-link" to="/work">Explore selected work <ArrowUpRight size={14} aria-hidden="true" /></Link>
       </aside></div>
     </Container>
   </section></>
