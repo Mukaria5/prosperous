@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom'
 import { Container } from '../components/Foundation'
 import { PageMeta } from '../components/PageMeta'
 import { configuredEmail, configuredExternalUrl, siteConfig } from '../data/siteConfig'
-import { buildProjectInquiryMailto, projectTypes, validateProjectInquiry, type InquiryErrors, type InquiryField, type ProjectInquiry } from '../utils/projectInquiry'
+import { projectTypes, validateProjectInquiry, type InquiryErrors, type InquiryField, type ProjectInquiry } from '../utils/projectInquiry'
 
 const email = configuredEmail(siteConfig.email)
 const linkedin = configuredExternalUrl(siteConfig.linkedinUrl, ['linkedin.com'])
@@ -36,7 +36,7 @@ export function ContactPage() {
     setFormNotice('')
   }
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (submissionInProgress.current) return
 
@@ -49,19 +49,32 @@ export function ContactPage() {
       return
     }
 
-    if (!email) {
-      setFormNotice('Email contact is not configured. Please use the direct contact option instead.')
-      return
-    }
-
     submissionInProgress.current = true
     setIsSubmitting(true)
-    setFormNotice('Your email application should open with a draft. Review and send it there to complete your inquiry; this website has not sent or stored the message.')
-    window.location.href = buildProjectInquiryMailto(email, values)
-    window.setTimeout(() => {
+    setFormNotice('Sending your inquiry…')
+    const formData = new FormData(event.currentTarget)
+
+    try {
+      const response = await fetch('/api/contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...values,
+          website: String(formData.get('website') || ''),
+        }),
+      })
+      const result = await response.json() as { success?: boolean; error?: string }
+      if (!response.ok || result.success !== true) {
+        setFormNotice(result.error || 'We couldn’t send your inquiry. Your details are still here; please try again or email directly.')
+        return
+      }
+      setFormNotice('Your inquiry was accepted by the email service. This does not confirm final delivery to the recipient’s inbox.')
+    } catch {
+      setFormNotice('We couldn’t reach the submission service. Your details are still here; please try again or email directly.')
+    } finally {
       submissionInProgress.current = false
       setIsSubmitting(false)
-    }, 1200)
+    }
   }
 
   const describedBy = (field: InquiryField) => errors[field] ? `contact-${field}-error` : undefined
@@ -72,7 +85,8 @@ export function ContactPage() {
       <div className="contact-page-heading"><h1 id="contact-page-title">Have an idea?<br />Let&apos;s make it <em>happen.</em></h1><p>Share a few details about what you&apos;re planning. I&apos;ll review your requirements and get back to you.</p></div>
       <div className="contact-page-grid"><form className="contact-form" onSubmit={handleSubmit} noValidate>
         <h2>Tell me about your project</h2>
-        <p className="contact-form-note">Your email application will open with a prepared draft. Review it and send it there to complete your inquiry; this website does not send or store messages.</p>
+        <p className="contact-form-note">Share a few details and your inquiry will be submitted to the email service for delivery to Prosperous. Your information is used to respond to this request.</p>
+        <div className="contact-honeypot" aria-hidden="true"><label htmlFor="contact-website">Leave this field empty</label><input id="contact-website" name="website" type="text" autoComplete="off" tabIndex={-1} /></div>
         <div className="contact-form-fields">
           <div className="contact-form-field">
             <label htmlFor="contact-fullName">Full name <span aria-hidden="true">*</span></label>
@@ -129,7 +143,7 @@ export function ContactPage() {
             {errors.description && <p className="contact-field-error" id="contact-description-error" role="alert">{errors.description}</p>}
           </div>
         </div>
-        <button className="button button-primary" type="submit" disabled={isSubmitting}>{isSubmitting ? 'Preparing email draft…' : 'Send Project Inquiry'} <ArrowUpRight size={15} aria-hidden="true" /></button>
+        <button className="button button-primary" type="submit" disabled={isSubmitting}>{isSubmitting ? 'Sending inquiry…' : 'Send Project Inquiry'} <ArrowUpRight size={15} aria-hidden="true" /></button>
         <p className="contact-form-notice" role="status" aria-live="polite">{formNotice}</p>
       </form><aside className="contact-details" aria-label="Contact details">
         <div><span>EMAIL</span>{email ? <a href={`mailto:${email}`}>{email}<ArrowUpRight size={14} aria-hidden="true" /></a> : <p>Email contact is not configured.</p>}</div>

@@ -39,22 +39,3 @@ export function validateProjectInquiry(values: ProjectInquiry): InquiryErrors {
   }
   return errors
 }
-
-/** Builds a mail draft URL; it does not send or store the inquiry. */
-export function buildProjectInquiryMailto(to: string, inquiry: ProjectInquiry) {
-  const subject = `Project inquiry — ${inquiry.fullName.trim()}`
-  const body = [
-    `Full name: ${inquiry.fullName.trim()}`,
-    `Email: ${inquiry.email.trim()}`,
-    `Project type: ${inquiry.projectType}`,
-    `Company or brand: ${inquiry.company?.trim() || 'Not provided'}`,
-    `Estimated budget: ${inquiry.budget || 'Not sure yet'}`,
-    `Expected timeline: ${inquiry.timeline || 'Flexible / not provided'}`,
-    `Reference URL: ${inquiry.referenceUrl?.trim() || 'Not provided'}`,
-    '',
-    'Project description:',
-    inquiry.description.trim(),
-  ].join('\n')
-
-  return `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
-}
