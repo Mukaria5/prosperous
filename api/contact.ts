@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 const MAX_BODY_BYTES = 16_384
