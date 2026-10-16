@@ -21,4 +21,6 @@ The EmailJS template must have the recipient configured as `prodesignske@gmail.c
 
 The API reports success only after EmailJS returns a successful HTTP response. This confirms provider acceptance, not final delivery to the recipient's inbox. No real submission has been made as part of this code change.
 
+For production diagnostics, open the Vercel project dashboard, select **Logs**, and filter the route to `/api/contact`. Each failure log includes a stage and HTTP status; EmailJS failures include only the provider HTTP status or error type. The handler never logs credentials or submitted field values. After deploying, submit a real test inquiry from `/contact`, confirm the function invocation and `emailjs_response`/network logs if it fails, and verify the resulting email in `prodesignske@gmail.com` before treating delivery as confirmed. The CLI alternative is `vercel logs --environment production --query "/api/contact"` from a linked project.
+
 Basic abuse controls include server-side field validation and length limits, an empty honeypot, same-origin checks, request-size limits, and an in-memory per-IP rate limit. Because Vercel can run multiple or short-lived function instances, this rate limit is best-effort per warm instance; use a shared rate-limit store or additional verification if stronger distributed abuse protection is required.

@@ -1,10 +1,19 @@
-import { projectTypes } from '../src/utils/projectInquiry.ts'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 
 const MAX_BODY_BYTES = 16_384
 const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000
 const RATE_LIMIT_REQUESTS = 3
 const rateLimitBuckets = new Map<string, { count: number; resetAt: number }>()
 
+const projectTypes = [
+  'Website Design & Development',
+  'UI/UX Design',
+  'Mobile App Design & Development',
+  'E-commerce Website',
+  'SaaS Product',
+  'Branding & Digital Marketing',
+  'Other',
+]
 const budgets = [
   'Under KSh 20,000',
   'KSh 20,000–50,000',
@@ -16,16 +25,24 @@ const budgets = [
 const timelines = ['ASAP', 'Within 2–4 weeks', 'Within 1–3 months', 'Flexible']
 
 type JsonRecord = Record<string, unknown>
+type ContactRequest = IncomingMessage & { body?: unknown }
 
-function json(body: JsonRecord, status: number) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': 'no-store',
-      'X-Content-Type-Options': 'nosniff',
-    },
-  })
+function logFailure(stage: string, httpStatus: number, details: Record<string, string | number> = {}) {
+  console.error('[api/contact]', { stage, httpStatus, ...details })
+}
+
+function respond(response: ServerResponse, status: number, body: JsonRecord) {
+  response.statusCode = status
+  response.setHeader('Content-Type', 'application/json; charset=utf-8')
+  response.setHeader('Cache-Control', 'no-store')
+  response.setHeader('X-Content-Type-Options', 'nosniff')
+  if (status === 405) response.setHeader('Allow', 'POST')
+  response.end(JSON.stringify(body))
+}
+
+function header(request: ContactRequest, name: string) {
+  const value = request.headers[name.toLowerCase()]
+  return Array.isArray(value) ? value[0] : value
 }
 
 function textField(body: JsonRecord, key: string, maxLength: number) {
@@ -41,9 +58,10 @@ function optionalTextField(body: JsonRecord, key: string, maxLength: number) {
   return textField(body, key, maxLength)
 }
 
-function isRateLimited(request: Request, now: number) {
-  const forwardedFor = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-  const address = forwardedFor || request.headers.get('x-real-ip') || 'unknown'
+function isRateLimited(request: ContactRequest, now: number) {
+  const address = header(request, 'x-forwarded-for')?.split(',')[0]?.trim()
+    || header(request, 'x-real-ip')
+    || 'unknown'
   const bucket = rateLimitBuckets.get(address)
 
   if (!bucket || bucket.resetAt <= now) {
@@ -64,57 +82,87 @@ function isRateLimited(request: Request, now: number) {
   return false
 }
 
-function sameOrigin(request: Request) {
-  const origin = request.headers.get('origin')
+function sameOrigin(request: ContactRequest) {
+  const origin = header(request, 'origin')
   if (!origin) return true
   try {
     const originHost = new URL(origin).host
-    const forwardedHost = request.headers.get('x-forwarded-host')?.split(',')[0]?.trim()
-    const requestHost = forwardedHost || request.headers.get('host') || new URL(request.url).host
-    return originHost === requestHost
+    const requestHost = header(request, 'x-forwarded-host')?.split(',')[0]?.trim()
+      || header(request, 'host')
+    return Boolean(requestHost && originHost === requestHost)
   } catch {
     return false
   }
 }
 
-export default async function handler(request: Request): Promise<Response> {
+function parseBody(value: unknown): JsonRecord | null {
+  try {
+    const parsed: unknown = typeof value === 'string' ? JSON.parse(value) : value
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    return parsed as JsonRecord
+  } catch {
+    return null
+  }
+}
+
+function fail(response: ServerResponse, stage: string, status: number, message: string) {
+  logFailure(stage, status)
+  respond(response, status, { error: message })
+}
+
+export default async function handler(request: ContactRequest, response: ServerResponse): Promise<void> {
   if (request.method !== 'POST') {
-    return json({ error: 'Method not allowed.' }, 405)
+    fail(response, 'method_not_allowed', 405, 'Method not allowed.')
+    return
   }
   if (!sameOrigin(request)) {
-    return json({ error: 'Unable to submit this inquiry.' }, 403)
+    fail(response, 'origin_check', 403, 'Unable to submit this inquiry.')
+    return
   }
-  if (!request.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
-    return json({ error: 'Please submit your inquiry using the contact form.' }, 415)
+  if (!header(request, 'content-type')?.toLowerCase().startsWith('application/json')) {
+    fail(response, 'content_type', 415, 'Please submit your inquiry using the contact form.')
+    return
   }
 
-  const contentLength = Number(request.headers.get('content-length') || 0)
+  const contentLength = Number(header(request, 'content-length') || 0)
   if (contentLength > MAX_BODY_BYTES) {
-    return json({ error: 'Your inquiry is too large. Please shorten the details and try again.' }, 413)
+    fail(response, 'body_too_large', 413, 'Your inquiry is too large. Please shorten the details and try again.')
+    return
   }
 
-  let body: JsonRecord
+  let requestBody: unknown
   try {
-    const rawBody = await request.text()
-    if (new TextEncoder().encode(rawBody).byteLength > MAX_BODY_BYTES) {
-      return json({ error: 'Your inquiry is too large. Please shorten the details and try again.' }, 413)
-    }
-    const parsed: unknown = JSON.parse(rawBody)
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return json({ error: 'Please check your details and try again.' }, 400)
-    }
-    body = parsed as JsonRecord
+    requestBody = request.body
   } catch {
-    return json({ error: 'Please check your details and try again.' }, 400)
+    fail(response, 'body_parse', 400, 'Please check your details and try again.')
+    return
+  }
+  const body = parseBody(requestBody)
+  if (!body) {
+    fail(response, 'body_parse', 400, 'Please check your details and try again.')
+    return
+  }
+  let bodyBytes: number
+  try {
+    bodyBytes = Buffer.byteLength(JSON.stringify(body), 'utf8')
+  } catch {
+    fail(response, 'body_size_check', 400, 'Please check your details and try again.')
+    return
+  }
+  if (bodyBytes > MAX_BODY_BYTES) {
+    fail(response, 'body_too_large', 413, 'Your inquiry is too large. Please shorten the details and try again.')
+    return
   }
 
   if (isRateLimited(request, Date.now())) {
-    return json({ error: 'Too many inquiries were submitted from this connection. Please wait a few minutes and try again.' }, 429)
+    fail(response, 'rate_limit', 429, 'Too many inquiries were submitted from this connection. Please wait a few minutes and try again.')
+    return
   }
 
   const honeypot = textField(body, 'website', 200)
   if (honeypot === null || honeypot !== '') {
-    return json({ error: 'Please check your details and try again.' }, 400)
+    fail(response, 'honeypot', 400, 'Please check your details and try again.')
+    return
   }
 
   const name = textField(body, 'fullName', 120)
@@ -127,23 +175,28 @@ export default async function handler(request: Request): Promise<Response> {
   const projectDescription = textField(body, 'description', 5_000)
 
   if (!name || !email || !projectType || !projectDescription || company === null || budget === null || timeline === null || referenceUrl === null) {
-    return json({ error: 'Please check your details and try again.' }, 400)
+    fail(response, 'field_validation', 400, 'Please check your details and try again.')
+    return
   }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !projectTypes.includes(projectType as typeof projectTypes[number])) {
-    return json({ error: 'Please check your email address and project type.' }, 400)
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !projectTypes.includes(projectType)) {
+    fail(response, 'email_or_project_validation', 400, 'Please check your email address and project type.')
+    return
   }
   if (budget && !budgets.includes(budget)) {
-    return json({ error: 'Please choose a valid budget range.' }, 400)
+    fail(response, 'budget_validation', 400, 'Please choose a valid budget range.')
+    return
   }
   if (timeline && !timelines.includes(timeline)) {
-    return json({ error: 'Please choose a valid timeline.' }, 400)
+    fail(response, 'timeline_validation', 400, 'Please choose a valid timeline.')
+    return
   }
   if (referenceUrl) {
     try {
       const url = new URL(referenceUrl)
       if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('Invalid URL protocol')
     } catch {
-      return json({ error: 'Please enter a valid reference URL using https:// or http://.' }, 400)
+      fail(response, 'reference_url_validation', 400, 'Please enter a valid reference URL using https:// or http://.')
+      return
     }
   }
 
@@ -152,7 +205,10 @@ export default async function handler(request: Request): Promise<Response> {
   const publicKey = process.env.EMAILJS_PUBLIC_KEY
   const privateKey = process.env.EMAILJS_PRIVATE_KEY
   if (!serviceId || !templateId || !publicKey || !privateKey) {
-    return json({ error: 'The inquiry service is not configured yet. Please email directly instead.' }, 503)
+    const missingVariableCount = [serviceId, templateId, publicKey, privateKey].filter((value) => !value).length
+    logFailure('emailjs_configuration', 503, { missingVariableCount })
+    respond(response, 503, { error: 'The inquiry service is not configured yet. Please email directly instead.' })
+    return
   }
 
   const controller = new AbortController()
@@ -180,11 +236,14 @@ export default async function handler(request: Request): Promise<Response> {
       }),
     })
     if (!providerResponse.ok) {
-      return json({ error: 'We couldn’t send your inquiry right now. Your details are still here; please try again or email directly.' }, 502)
+      logFailure('emailjs_response', 502, { providerHttpStatus: providerResponse.status })
+      respond(response, 502, { error: 'We couldn’t send your inquiry right now. Your details are still here; please try again or email directly.' })
+      return
     }
-    return json({ success: true }, 200)
-  } catch {
-    return json({ error: 'We couldn’t reach the email service. Your details are still here; please try again or email directly.' }, 502)
+    respond(response, 200, { success: true })
+  } catch (error) {
+    logFailure('emailjs_network', 502, { errorType: error instanceof Error ? error.name : 'UnknownError' })
+    respond(response, 502, { error: 'We couldn’t reach the email service. Your details are still here; please try again or email directly.' })
   } finally {
     clearTimeout(timeout)
   }
